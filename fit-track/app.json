@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "FitTrack",
+    "slug": "fit-track",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSMotionUsageDescription": "FitTrack uses motion data to count your steps."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "permissions": [
+        "android.permission.ACTIVITY_RECOGNITION"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}

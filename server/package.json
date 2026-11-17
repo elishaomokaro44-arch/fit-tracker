@@ -1,0 +1,20 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "description": "FitTrack API: friends, step sync and leaderboard",
+  "main": "index.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "start": "node src/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "express": "^5.3.0"
+  }
+}
