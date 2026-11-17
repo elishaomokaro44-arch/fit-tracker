@@ -1,9 +1,17 @@
-import { useEffect, useRef, useState } from 'react';
-import { AppState, Platform, Text, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { AppState, Platform, StyleSheet, Text, View } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Pedometer } from 'expo-sensors';
 import { dayKey, lastNDays, stepStats } from '../calc';
-import { loadGoal, loadSteps, saveGoal, saveSteps } from '../storage';
-import { Button, Card, Field, Title, styles, colors } from '../ui';
+import {
+  loadGoal, loadSteps, saveGoal, saveSteps,
+  loadWater, saveWater, loadWaterGoal, saveWaterGoal,
+  loadReminder, saveReminder, loadWalks, loadWeights, loadBadges, saveBadges,
+} from '../storage';
+import { bestStreak, currentStreak, earnedBadges } from '../achievements';
+import { requestReminderPermission, scheduleStepReminders } from '../reminders';
+import { ReminderCard, StreakCard, WaterCard } from '../components/TodayCards';
+import { Button, Card, Field, ProgressRing, Title, useTheme } from '../ui';
 
 // history = { 'YYYY-MM-DD': { sensor: number, manual: number } }
 const total = (entry) => (entry ? (entry.sensor || 0) + (entry.manual || 0) : 0);
@@ -13,7 +21,8 @@ function startOfDay(key) {
   return new Date(y, m - 1, d);
 }
 
-export default function StepsScreen({ profile, onHistoryChange }) {
+export default function StepsScreen({ profile, onHistoryChange, active }) {
+  const { c, s } = useTheme();
   const [history, setHistory] = useState({});
   const [goal, setGoal] = useState(10000);
   const [loaded, setLoaded] = useState(false);
@@ -22,17 +31,35 @@ export default function StepsScreen({ profile, onHistoryChange }) {
   const [goalText, setGoalText] = useState('');
   const [today, setToday] = useState(dayKey());
   const lastWatch = useRef(null);
+  const [water, setWater] = useState({});
+  const [waterGoal, setWaterGoal] = useState(8);
+  const [reminder, setReminder] = useState({ enabled: false, hour: 19 });
+  const [reminderNote, setReminderNote] = useState('');
+  const [walks, setWalks] = useState([]);
+  const [weights, setWeights] = useState([]);
+  const [savedBadges, setSavedBadges] = useState([]);
 
   // Load saved data
   useEffect(() => {
     (async () => {
-      const [h, g] = await Promise.all([loadSteps(), loadGoal()]);
+      const [h, g, w, wg, r, b] = await Promise.all([loadSteps(), loadGoal(), loadWater(), loadWaterGoal(), loadReminder(), loadBadges()]);
+      setSavedBadges(b);
       setHistory(h);
       setGoal(g);
       setGoalText(String(g));
+      setWater(w);
+      setWaterGoal(wg);
+      setReminder(r);
       setLoaded(true);
     })();
   }, []);
+
+  // Walks and weights are saved by other tabs; re-read them whenever this tab is shown (for badges)
+  useEffect(() => {
+    if (!active) return;
+    loadWalks().then(setWalks);
+    loadWeights().then(setWeights);
+  }, [active]);
 
   // Save whenever history changes (after the first load)
   useEffect(() => {
@@ -138,10 +165,63 @@ export default function StepsScreen({ profile, onHistoryChange }) {
   }
 
   const steps = total(history[today]);
+
+  // Rebuild evening reminders when steps, goal or settings change (waits a few seconds so
+  // a burst of sensor updates only reschedules once)
+  useEffect(() => {
+    if (!loaded) return;
+    const id = setTimeout(() => {
+      scheduleStepReminders({ ...reminder, steps, goal }).catch(() => {});
+    }, 3000);
+    return () => clearTimeout(id);
+  }, [loaded, steps, goal, reminder.enabled, reminder.hour]);
+
+  async function changeReminder(next) {
+    setReminderNote('');
+    if (next.enabled && !reminder.enabled) {
+      const ok = await requestReminderPermission().catch(() => false);
+      if (!ok) {
+        setReminderNote('Notifications are turned off for FitTrack. Allow them in your phone’s Settings to get reminders.');
+        return;
+      }
+    }
+    setReminder(next);
+    saveReminder(next);
+  }
+
+  function changeWater(delta) {
+    setWater((w) => {
+      const next = { ...w, [today]: Math.max(0, Math.min(30, (w[today] || 0) + delta)) };
+      saveWater(next);
+      return next;
+    });
+  }
+
+  function changeWaterGoal(g) {
+    setWaterGoal(g);
+    saveWaterGoal(g);
+  }
+
+  const streak = useMemo(() => currentStreak(history, goal, today), [history, goal, today]);
+  const best = useMemo(() => bestStreak(history, goal), [history, goal]);
+  // Badges earned now, plus any earned before (so changing a goal never takes a badge away)
+  const earned = useMemo(() => {
+    const now = earnedBadges({ history, goal, walks, water, waterGoal, weights });
+    savedBadges.forEach((id) => now.add(id));
+    return now;
+  }, [history, goal, walks, water, waterGoal, weights, savedBadges]);
+
+  useEffect(() => {
+    if (loaded && earned.size > savedBadges.length) {
+      const all = [...earned];
+      setSavedBadges(all);
+      saveBadges(all);
+    }
+  }, [loaded, earned]);
+
   const pct = Math.min(1, steps / goal);
   const { km, kcal } = stepStats(steps, profile.heightCm, profile.weightKg);
   const week = lastNDays(7);
-  const weekMax = Math.max(goal, ...week.map((k) => total(history[k])));
 
   const sensorText = {
     checking: 'Checking for a step sensor…',
@@ -153,30 +233,72 @@ export default function StepsScreen({ profile, onHistoryChange }) {
     denied: 'Motion permission was refused. Allow “Physical activity / Motion” in settings, or add steps by hand.',
   }[sensor];
 
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const done = pct >= 1;
+  const glasses = water[today] || 0;
+
   return (
     <View>
-      <Card style={{ alignItems: 'center' }}>
-        <Text style={styles.muted}>Today</Text>
-        <Text style={{ fontSize: 52, fontWeight: '800', color: colors.text }} testID="steps-today">
-          {steps.toLocaleString()}
+      {/* Hero: big step ring on a gradient */}
+      <LinearGradient
+        colors={[c.primary, c.primary2]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={hero.card}
+      >
+        <Text style={hero.greeting}>{greeting} 👋</Text>
+        <Text style={hero.sub}>
+          {done ? 'Goal smashed today. Keep it up!' : `${(goal - steps).toLocaleString()} steps to go`}
         </Text>
-        <Text style={styles.muted}>of {goal.toLocaleString()} steps · {Math.round(pct * 100)}%</Text>
-        <View style={{ width: '100%', height: 12, backgroundColor: '#eef2f4', borderRadius: 6, marginTop: 14, overflow: 'hidden' }}>
-          <View style={{ width: `${pct * 100}%`, height: '100%', backgroundColor: pct >= 1 ? '#16a34a' : colors.primary }} />
+        <View style={{ alignItems: 'center', marginVertical: 14 }}>
+          <ProgressRing size={210} stroke={18} progress={pct} color="#FFFFFF" track="rgba(255,255,255,0.25)" testID="steps-ring">
+            <Text style={hero.icon}>{done ? '🏆' : '👟'}</Text>
+            <Text style={hero.steps} testID="steps-today">{steps.toLocaleString()}</Text>
+            <Text style={hero.goal}>of {goal.toLocaleString()} · {Math.round((steps / goal) * 100)}%</Text>
+          </ProgressRing>
         </View>
-        {pct >= 1 ? <Text style={{ marginTop: 8, color: '#16a34a', fontWeight: '700' }}>Goal reached!</Text> : null}
-        <View style={[styles.row, { marginTop: 14, width: '100%' }]}>
-          <Mini label="Distance" value={`${km.toFixed(2)} km`} />
-          <Mini label="Burned (approx.)" value={`${Math.round(kcal)} kcal`} />
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <HeroChip icon="📍" value={`${km.toFixed(2)} km`} label="Distance" />
+          <HeroChip icon="⚡" value={`${Math.round(kcal)}`} label="kcal" />
+          <HeroChip icon="🔥" value={`${streak}`} label={streak === 1 ? 'day streak' : 'day streak'} />
+          <HeroChip icon="💧" value={`${glasses}/${waterGoal}`} label="water" />
         </View>
-        <Text style={[styles.muted, { marginTop: 12, textAlign: 'center' }]} testID="sensor-status">
-          {sensorText}
-        </Text>
+      </LinearGradient>
+      <Text style={[s.muted, { textAlign: 'center', marginTop: -4, marginBottom: 14, fontSize: 12 }]} testID="sensor-status">
+        {sensorText}
+      </Text>
+
+      <Card>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
+          <Title style={{ flex: 1, marginBottom: 0 }}>This week</Title>
+          <Text style={s.muted}>{week.filter((k) => total(history[k]) >= goal).length}/7 goals hit</Text>
+        </View>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+          {week.map((k) => {
+            const v = total(history[k]);
+            const d = startOfDay(k);
+            const hit = v >= goal;
+            const isToday = k === today;
+            return (
+              <View key={k} style={{ alignItems: 'center' }} testID="week-ring">
+                <ProgressRing size={40} stroke={5} progress={v / goal} color={hit ? c.success : isToday ? c.primary : c.bar}>
+                  <Text style={{ fontSize: 9, fontWeight: '800', color: c.text }}>
+                    {hit ? '✓' : v >= 1000 ? `${Math.floor(v / 1000)}k` : v || ''}
+                  </Text>
+                </ProgressRing>
+                <Text style={{ fontSize: 11, color: isToday ? c.primary : c.muted, marginTop: 6, fontWeight: isToday ? '800' : '600' }}>
+                  {d.toLocaleDateString('en-GB', { weekday: 'short' }).slice(0, 2)}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
       </Card>
 
       <Card>
-        <Title>Add steps by hand</Title>
-        <View style={[styles.row, { alignItems: 'flex-end' }]}>
+        <Title>Add steps</Title>
+        <View style={[s.row, { alignItems: 'flex-end' }]}>
           <Field
             placeholder="e.g. 2500"
             keyboardType="number-pad"
@@ -187,19 +309,31 @@ export default function StepsScreen({ profile, onHistoryChange }) {
           />
           <Button title="Add" onPress={() => addManual(addText)} />
         </View>
-        <View style={[styles.row, { marginTop: 10 }]}>
+        <View style={[s.row, { marginTop: 10 }]}>
           <Button variant="outline" title="+500" onPress={() => addManual(500)} style={{ flex: 1 }} />
           <Button variant="outline" title="+1,000" onPress={() => addManual(1000)} style={{ flex: 1 }} />
-          <Button variant="outline" title="Reset" onPress={clearManual} style={{ flex: 1 }} />
+          <Button variant="outline" title="Reset" onPress={clearManual} style={{ flex: 1 }} color={c.muted} />
         </View>
-        <Text style={[styles.muted, { marginTop: 8 }]}>
+        <Text style={[s.muted, { marginTop: 8 }]}>
           Reset removes steps you added by hand today. Sensor steps are kept.
         </Text>
       </Card>
 
+      <WaterCard
+        glasses={glasses}
+        goal={waterGoal}
+        onAdd={() => changeWater(1)}
+        onRemove={() => changeWater(-1)}
+        onGoal={changeWaterGoal}
+      />
+
+      <StreakCard current={streak} best={best} earned={earned} goal={goal} />
+
+      <ReminderCard reminder={reminder} onChange={changeReminder} note={reminderNote} />
+
       <Card>
-        <Title>Daily goal</Title>
-        <View style={[styles.row, { alignItems: 'flex-end' }]}>
+        <Title>Daily step goal</Title>
+        <View style={[s.row, { alignItems: 'flex-end' }]}>
           <Field
             suffix="steps"
             keyboardType="number-pad"
@@ -211,44 +345,28 @@ export default function StepsScreen({ profile, onHistoryChange }) {
           <Button title="Save" onPress={saveGoalText} />
         </View>
       </Card>
-
-      <Card>
-        <Title>Last 7 days</Title>
-        <View style={{ flexDirection: 'row', alignItems: 'flex-end', height: 140, gap: 8 }}>
-          {week.map((k) => {
-            const v = total(history[k]);
-            const d = startOfDay(k);
-            return (
-              <View key={k} style={{ flex: 1, alignItems: 'center' }}>
-                <Text style={{ fontSize: 10, color: colors.muted, marginBottom: 4 }}>
-                  {v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}
-                </Text>
-                <View
-                  style={{
-                    width: '100%',
-                    height: Math.max(3, (v / weekMax) * 100),
-                    borderRadius: 6,
-                    backgroundColor: v >= goal ? '#16a34a' : k === today ? colors.primary : '#99d5cf',
-                  }}
-                />
-                <Text style={{ fontSize: 11, color: k === today ? colors.text : colors.muted, marginTop: 6, fontWeight: k === today ? '700' : '400' }}>
-                  {d.toLocaleDateString('en-GB', { weekday: 'short' }).slice(0, 3)}
-                </Text>
-              </View>
-            );
-          })}
-        </View>
-        <Text style={[styles.muted, { marginTop: 10 }]}>Green bars reached your goal.</Text>
-      </Card>
     </View>
   );
 }
 
-function Mini({ label, value }) {
+function HeroChip({ icon, value, label }) {
   return (
-    <View style={{ flex: 1, backgroundColor: '#f8fafc', borderRadius: 12, padding: 10, alignItems: 'center' }}>
-      <Text style={styles.muted}>{label}</Text>
-      <Text style={{ fontWeight: '700', fontSize: 16, color: colors.text }}>{value}</Text>
+    <View style={hero.chip}>
+      <Text style={{ fontSize: 14 }}>{icon}</Text>
+      <Text style={hero.chipValue} numberOfLines={1}>{value}</Text>
+      <Text style={hero.chipLabel} numberOfLines={1}>{label}</Text>
     </View>
   );
 }
+
+const hero = StyleSheet.create({
+  card: { borderRadius: 28, padding: 20, marginBottom: 14 },
+  greeting: { color: '#FFFFFF', fontSize: 22, fontWeight: '900' },
+  sub: { color: 'rgba(255,255,255,0.85)', fontSize: 14, fontWeight: '600', marginTop: 2 },
+  icon: { fontSize: 24 },
+  steps: { color: '#FFFFFF', fontSize: 46, fontWeight: '900', letterSpacing: -1 },
+  goal: { color: 'rgba(255,255,255,0.85)', fontSize: 13, fontWeight: '700' },
+  chip: { flex: 1, backgroundColor: 'rgba(255,255,255,0.18)', borderRadius: 16, paddingVertical: 10, alignItems: 'center' },
+  chipValue: { color: '#FFFFFF', fontWeight: '900', fontSize: 15, marginTop: 2 },
+  chipLabel: { color: 'rgba(255,255,255,0.8)', fontSize: 10, fontWeight: '700' },
+});

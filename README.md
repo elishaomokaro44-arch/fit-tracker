@@ -4,7 +4,7 @@ A fitness app for counting steps, working out BMI and daily calories, and compet
 
 | Folder | What it is |
 |---|---|
-| [`fit-track/`](fit-track/README.md) | The phone app (Expo / React Native): Steps, BMI, Calories and Friends tabs |
+| [`fit-track/`](fit-track/README.md) | The phone app (Expo / React Native): Today (steps, water, streaks, badges, reminders), Activity (walk, run or cycle with a GPS route map and summary page), BMI (with weight log), Calories and Friends (leaderboard, weekly challenge, backup codes) tabs |
 | [`server/`](server/README.md) | The API for friends and the leaderboard (Node.js, Express, SQLite, Docker) |
 
 ## Quick start

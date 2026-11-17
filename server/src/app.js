@@ -28,6 +28,36 @@ function isValidDay(day) {
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === day;
 }
 
+// Monday to `day` (inclusive) of the week containing `day`
+function thisWeekDays(day) {
+  const d = new Date(`${day}T00:00:00Z`);
+  const sinceMonday = (d.getUTCDay() + 6) % 7; // Mon=0 … Sun=6
+  return daysEnding(day, sinceMonday + 1);
+}
+
+// Backup codes: 12 characters shown as XXXX-XXXX-XXXX. Dashes, spaces and case are ignored.
+function newBackupCode() {
+  const raw = randomCode(12);
+  return `${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8)}`;
+}
+const normalizeBackupCode = (code) => String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+// Small in-memory limiter so nobody can guess backup codes by trying millions of them.
+function rateLimiter(max, windowMs) {
+  const hits = new Map();
+  return (req, res, next) => {
+    const now = Date.now();
+    const key = req.ip;
+    let h = hits.get(key);
+    if (!h || h.resetAt < now) h = { count: 0, resetAt: now + windowMs };
+    h.count++;
+    hits.set(key, h);
+    if (hits.size > 10000) for (const [k, v] of hits) if (v.resetAt < now) hits.delete(k);
+    if (h.count > max) return res.status(429).json({ error: 'Too many attempts. Try again in a few minutes.' });
+    next();
+  };
+}
+
 // The 'n' days ending on `day` (inclusive), oldest first
 function daysEnding(day, n) {
   const end = new Date(`${day}T00:00:00Z`);
@@ -38,9 +68,11 @@ function daysEnding(day, n) {
   return out;
 }
 
-function createApp(db) {
+function createApp(db, { recoverLimit = 10 } = {}) {
   const app = express();
   app.disable('x-powered-by');
+  // Behind a reverse proxy (Caddy, a load balancer), set TRUST_PROXY=1 so rate limits see real client IPs
+  if (process.env.TRUST_PROXY) app.set('trust proxy', 1);
   app.use(express.json({ limit: '20kb' }));
 
   // Allow the web version of the app (a different port) to call the API.
@@ -53,7 +85,10 @@ function createApp(db) {
   });
 
   const q = {
-    userByToken: db.prepare('SELECT id, name, friend_code FROM users WHERE token_hash = ?'),
+    userByToken: db.prepare('SELECT id, name, friend_code, recovery_hash FROM users WHERE token_hash = ?'),
+    userByRecovery: db.prepare('SELECT id, name, friend_code FROM users WHERE recovery_hash = ?'),
+    setRecovery: db.prepare('UPDATE users SET recovery_hash = ? WHERE id = ?'),
+    setToken: db.prepare('UPDATE users SET token_hash = ? WHERE id = ?'),
     userByCode: db.prepare('SELECT id, name FROM users WHERE friend_code = ?'),
     codeExists: db.prepare('SELECT 1 FROM users WHERE friend_code = ?'),
     insertUser: db.prepare('INSERT INTO users (name, friend_code, token_hash) VALUES (?, ?, ?)'),
@@ -80,7 +115,8 @@ function createApp(db) {
     next();
   }
 
-  const publicUser = (u) => ({ id: u.id, name: u.name, friendCode: u.friend_code });
+  const publicUser = (u) => ({ id: u.id, name: u.name, friendCode: u.friend_code, hasBackupCode: !!u.recovery_hash });
+  const newToken = () => crypto.randomBytes(32).toString('base64url');
 
   app.get('/health', (req, res) => res.json({ ok: true }));
 
@@ -90,9 +126,26 @@ function createApp(db) {
     if (!name) return res.status(400).json({ error: 'Name must be 1–30 characters' });
     let code;
     do code = randomCode(); while (q.codeExists.get(code));
-    const token = crypto.randomBytes(32).toString('base64url');
+    const token = newToken();
     const { lastInsertRowid } = q.insertUser.run(name, code, sha256(token));
-    res.status(201).json({ user: { id: Number(lastInsertRowid), name, friendCode: code }, token });
+    res.status(201).json({ user: { id: Number(lastInsertRowid), name, friendCode: code, hasBackupCode: false }, token });
+  });
+
+  // Create (or replace) the backup code. It's shown once; only its hash is stored.
+  app.post('/api/me/backup-code', auth, (req, res) => {
+    const backupCode = newBackupCode();
+    q.setRecovery.run(sha256(normalizeBackupCode(backupCode)), req.user.id);
+    res.status(201).json({ backupCode });
+  });
+
+  // Restore a profile on a new phone. Gives this phone a new token, which signs the old phone out.
+  app.post('/api/recover', rateLimiter(recoverLimit, 15 * 60 * 1000), (req, res) => {
+    const code = normalizeBackupCode(req.body?.code);
+    const user = code.length === 12 && q.userByRecovery.get(sha256(code));
+    if (!user) return res.status(404).json({ error: "That backup code doesn't match any profile" });
+    const token = newToken();
+    q.setToken.run(sha256(token), user.id);
+    res.json({ user: { id: user.id, name: user.name, friendCode: user.friend_code, hasBackupCode: true }, token });
   });
 
   app.get('/api/me', auth, (req, res) => res.json({ user: publicUser(req.user) }));
@@ -153,10 +206,10 @@ function createApp(db) {
   // Leaderboard for you + your friends.
   // ?period=today|week  &day=YYYY-MM-DD (the phone's "today", since time zones differ)
   app.get('/api/leaderboard', auth, (req, res) => {
-    const period = req.query.period === 'week' ? 'week' : 'today';
+    const period = ['week', 'thisweek'].includes(req.query.period) ? req.query.period : 'today';
     const day = String(req.query.day || new Date().toISOString().slice(0, 10));
     if (!isValidDay(day)) return res.status(400).json({ error: 'Bad day' });
-    const days = period === 'week' ? daysEnding(day, 7) : [day];
+    const days = period === 'week' ? daysEnding(day, 7) : period === 'thisweek' ? thisWeekDays(day) : [day];
 
     const ids = [req.user.id, ...q.friendIds.all(req.user.id).map((r) => r.friend_id)];
     const idMarks = ids.map(() => '?').join(',');
@@ -203,4 +256,4 @@ function createApp(db) {
   return app;
 }
 
-module.exports = { createApp, daysEnding, isValidDay };
+module.exports = { createApp, daysEnding, thisWeekDays, isValidDay };

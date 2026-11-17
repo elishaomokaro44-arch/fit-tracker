@@ -1,13 +1,13 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { openDb } = require('../src/db');
-const { createApp, daysEnding } = require('../src/app');
+const { createApp, daysEnding, thisWeekDays } = require('../src/app');
 
 let server;
 let base;
 
 test.before(async () => {
-  server = createApp(openDb(':memory:')).listen(0);
+  server = createApp(openDb(':memory:'), { recoverLimit: 5 }).listen(0);
   await new Promise((r) => server.once('listening', r));
   base = `http://127.0.0.1:${server.address().port}`;
 });
@@ -131,4 +131,61 @@ test('friends and leaderboard', async () => {
   const final = await call('GET', '/api/leaderboard?day=2026-11-17', { token: me.token });
   assert.deepEqual(final.body.entries.map((e) => e.name), ['Elisha']);
   assert.equal((await call('GET', '/api/leaderboard?day=bad', { token: me.token })).status, 400);
+});
+
+test('thisWeekDays starts on Monday', () => {
+  // 2026-11-17 is a Tuesday
+  assert.deepEqual(thisWeekDays('2026-11-17'), ['2026-11-16', '2026-11-17']);
+  assert.deepEqual(thisWeekDays('2026-11-16'), ['2026-11-16']);
+  assert.equal(thisWeekDays('2026-11-22').length, 7); // Sunday
+  assert.equal(thisWeekDays('2026-11-22')[0], '2026-11-16');
+});
+
+test('this-week leaderboard (for the group challenge)', async () => {
+  const a = await signUp('WeekA');
+  const b = await signUp('WeekB');
+  await call('POST', '/api/friends', { token: a.token, body: { code: b.user.friendCode } });
+  await call('PUT', '/api/steps', { token: a.token, body: { days: { '2026-11-15': 9999, '2026-11-16': 3000, '2026-11-17': 4000 } } });
+  await call('PUT', '/api/steps', { token: b.token, body: { days: { '2026-11-17': 5000 } } });
+  const r = await call('GET', '/api/leaderboard?period=thisweek&day=2026-11-17', { token: a.token });
+  assert.equal(r.body.period, 'thisweek');
+  assert.equal(r.body.from, '2026-11-16'); // Sunday the 15th is last week
+  assert.equal(r.body.groupTotal, 12000);
+});
+
+test('backup code restores a profile and signs the old phone out', async () => {
+  const u = await signUp('Restorer');
+  assert.equal(u.user.hasBackupCode, false);
+  const friend = await signUp('Pal');
+  await call('POST', '/api/friends', { token: u.token, body: { code: friend.user.friendCode } });
+
+  const made = await call('POST', '/api/me/backup-code', { token: u.token });
+  assert.equal(made.status, 201);
+  assert.match(made.body.backupCode, /^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/);
+  assert.equal((await call('GET', '/api/me', { token: u.token })).body.user.hasBackupCode, true);
+
+  // Typed in lowercase without dashes still works
+  const typed = made.body.backupCode.replace(/-/g, ' ').toLowerCase();
+  const restored = await call('POST', '/api/recover', { body: { code: typed } });
+  assert.equal(restored.status, 200);
+  assert.equal(restored.body.user.id, u.user.id);
+  assert.equal(restored.body.user.friendCode, u.user.friendCode);
+  assert.notEqual(restored.body.token, u.token);
+
+  // Old phone is signed out, new phone keeps the friends
+  assert.equal((await call('GET', '/api/me', { token: u.token })).status, 401);
+  const board = await call('GET', '/api/leaderboard?day=2026-11-17', { token: restored.body.token });
+  assert.deepEqual(board.body.entries.map((e) => e.name).sort(), ['Pal', 'Restorer']);
+
+  // Making a new code replaces the old one
+  const again = await call('POST', '/api/me/backup-code', { token: restored.body.token });
+  assert.equal((await call('POST', '/api/recover', { body: { code: made.body.backupCode } })).status, 404);
+  assert.equal((await call('POST', '/api/recover', { body: { code: again.body.backupCode } })).status, 200);
+});
+
+test('backup code guessing is rate limited', async () => {
+  // Earlier test used 3 of the 5 allowed attempts from this IP
+  const statuses = [];
+  for (let i = 0; i < 4; i++) statuses.push((await call('POST', '/api/recover', { body: { code: 'AAAA-AAAA-AAAA' } })).status);
+  assert.ok(statuses.includes(429), statuses.join(','));
 });

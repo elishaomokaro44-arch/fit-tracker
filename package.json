@@ -1,0 +1,12 @@
+{
+  "name": "fit-tracker",
+  "private": true,
+  "description": "FitTrack: phone app (fit-track/) and leaderboard server (server/). Shortcuts so commands work from this top folder.",
+  "scripts": {
+    "start": "npm --prefix fit-track start",
+    "web": "npm --prefix fit-track run web",
+    "test": "npm --prefix server test && npm --prefix fit-track test",
+    "server": "docker compose -f server/docker-compose.yml up -d --build",
+    "server:stop": "docker compose -f server/docker-compose.yml stop"
+  }
+}

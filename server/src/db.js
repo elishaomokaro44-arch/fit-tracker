@@ -33,6 +33,11 @@ function openDb(file) {
       PRIMARY KEY (user_id, friend_id)
     );
   `);
+
+  // Added later: hash of the user's backup code (for restoring a profile on a new phone)
+  const cols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+  if (!cols.includes('recovery_hash')) db.exec('ALTER TABLE users ADD COLUMN recovery_hash TEXT');
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_recovery ON users(recovery_hash)');
   return db;
 }
 

@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { Text, View } from 'react-native';
 import { bmi, bmiCategory, feetInchesToCm, healthyWeightRange, lbToKg, LB_PER_KG } from '../calc';
-import { Card, Field, Segmented, Title, styles, colors } from '../ui';
+import { Card, Field, Segmented, Title, useTheme } from '../ui';
+import WeightLog from '../components/WeightLog';
 
 // Height/weight come from the shared profile so the calorie screen can reuse them.
 export default function BmiScreen({ profile, setProfile }) {
+  const { c, s } = useTheme();
   const [units, setUnits] = useState('metric');
   const [ft, setFt] = useState('');
   const [inch, setInch] = useState('');
@@ -56,7 +58,7 @@ export default function BmiScreen({ profile, setProfile }) {
         />
         <View style={{ height: 14 }} />
         {units === 'metric' ? (
-          <View style={styles.row}>
+          <View style={s.row}>
             <Field
               label="Height"
               suffix="cm"
@@ -75,7 +77,7 @@ export default function BmiScreen({ profile, setProfile }) {
             />
           </View>
         ) : (
-          <View style={styles.row}>
+          <View style={s.row}>
             <Field label="Height" suffix="ft" value={ft} placeholder="5" onChangeText={(t) => onImperial(t, inch, lb)} />
             <Field label=" " suffix="in" value={inch} placeholder="7" onChangeText={(t) => onImperial(ft, t, lb)} />
             <Field label="Weight" suffix="lb" value={lb} placeholder="154" onChangeText={(t) => onImperial(ft, inch, t)} />
@@ -88,7 +90,7 @@ export default function BmiScreen({ profile, setProfile }) {
         {value ? (
           <>
             <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 10 }}>
-              <Text style={{ fontSize: 44, fontWeight: '800', color: colors.text }} testID="bmi-value">
+              <Text style={{ fontSize: 44, fontWeight: '800', color: c.text }} testID="bmi-value">
                 {value.toFixed(1)}
               </Text>
               <Text style={{ fontSize: 18, fontWeight: '700', color: cat.color }} testID="bmi-category">
@@ -102,25 +104,27 @@ export default function BmiScreen({ profile, setProfile }) {
               <View style={{ flex: 10, backgroundColor: '#dc2626' }} />
             </View>
             <View style={{ height: 14 }}>
-              <View style={{ position: 'absolute', left: `${pos}%`, marginLeft: -6, top: 0, width: 0, height: 0, borderLeftWidth: 6, borderRightWidth: 6, borderBottomWidth: 8, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: colors.text }} />
+              <View style={{ position: 'absolute', left: `${pos}%`, marginLeft: -6, top: 0, width: 0, height: 0, borderLeftWidth: 6, borderRightWidth: 6, borderBottomWidth: 8, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: c.text }} />
             </View>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-              <Text style={styles.muted}>Under 18.5</Text>
-              <Text style={styles.muted}>18.5–24.9</Text>
-              <Text style={styles.muted}>25–29.9</Text>
-              <Text style={styles.muted}>30+</Text>
+              <Text style={s.muted}>Under 18.5</Text>
+              <Text style={s.muted}>18.5–24.9</Text>
+              <Text style={s.muted}>25–29.9</Text>
+              <Text style={s.muted}>30+</Text>
             </View>
             {range ? (
-              <Text style={[styles.muted, { marginTop: 12 }]}>
+              <Text style={[s.muted, { marginTop: 12 }]}>
                 A healthy weight for your height is about {range.min.toFixed(0)}–{range.max.toFixed(0)} kg.
               </Text>
             ) : null}
           </>
         ) : (
-          <Text style={styles.muted}>Enter your height and weight to see your BMI.</Text>
+          <Text style={s.muted}>Enter your height and weight to see your BMI.</Text>
         )}
       </Card>
-      <Text style={[styles.muted, { textAlign: 'center' }]}>
+      <WeightLog profile={profile} setProfile={setProfile} />
+
+      <Text style={[s.muted, { textAlign: 'center' }]}>
         BMI is a rough guide for adults. It doesn't account for muscle mass, age or body shape.
       </Text>
     </View>
