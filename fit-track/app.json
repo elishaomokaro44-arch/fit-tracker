@@ -35,7 +35,8 @@
           "locationWhenInUsePermission": "FitTrack uses your location to map your walks and runs."
         }
       ],
-      "expo-notifications"
+      "expo-notifications",
+      "expo-secure-store"
     ]
   }
 }

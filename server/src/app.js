@@ -1,6 +1,7 @@
 // FitTrack API: accounts, friends, step sync and leaderboard.
 const crypto = require('node:crypto');
 const express = require('express');
+const { registerAccountRoutes } = require('./accounts');
 
 // No 0/O or 1/I/L, so codes are easy to read out to a friend.
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -68,12 +69,15 @@ function daysEnding(day, n) {
   return out;
 }
 
-function createApp(db, { recoverLimit = 10 } = {}) {
+function createApp(db, { recoverLimit = 10, loginLimit = 10, signupLimit = 20 } = {}) {
   const app = express();
   app.disable('x-powered-by');
   // Behind a reverse proxy (Caddy, a load balancer), set TRUST_PROXY=1 so rate limits see real client IPs
   if (process.env.TRUST_PROXY) app.set('trust proxy', 1);
-  app.use(express.json({ limit: '20kb' }));
+  // Small bodies everywhere except progress sync, which can include activity routes
+  const smallJson = express.json({ limit: '20kb' });
+  const bigJson = express.json({ limit: '3mb' });
+  app.use((req, res, next) => (req.path === '/api/sync' ? bigJson : smallJson)(req, res, next));
 
   // Allow the web version of the app (a different port) to call the API.
   app.use((req, res, next) => {
@@ -85,14 +89,15 @@ function createApp(db, { recoverLimit = 10 } = {}) {
   });
 
   const q = {
-    userByToken: db.prepare('SELECT id, name, friend_code, recovery_hash FROM users WHERE token_hash = ?'),
+    userBySession: db.prepare('SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?'),
+    userByToken: db.prepare('SELECT * FROM users WHERE token_hash = ?'),
     userByRecovery: db.prepare('SELECT id, name, friend_code FROM users WHERE recovery_hash = ?'),
+    userById: db.prepare('SELECT * FROM users WHERE id = ?'),
     setRecovery: db.prepare('UPDATE users SET recovery_hash = ? WHERE id = ?'),
     setToken: db.prepare('UPDATE users SET token_hash = ? WHERE id = ?'),
     userByCode: db.prepare('SELECT id, name FROM users WHERE friend_code = ?'),
     codeExists: db.prepare('SELECT 1 FROM users WHERE friend_code = ?'),
     insertUser: db.prepare('INSERT INTO users (name, friend_code, token_hash) VALUES (?, ?, ?)'),
-    renameUser: db.prepare('UPDATE users SET name = ? WHERE id = ?'),
     deleteUser: db.prepare('DELETE FROM users WHERE id = ?'),
     upsertSteps: db.prepare(`
       INSERT INTO steps (user_id, day, steps) VALUES (?, ?, ?)
@@ -107,15 +112,36 @@ function createApp(db, { recoverLimit = 10 } = {}) {
   };
 
   // Every route except sign-up needs "Authorization: Bearer <token>".
-  function auth(req, res, next) {
+  // Finds the user for "Authorization: Bearer <token>": a login session, or the single
+  // token profiles had before accounts existed.
+  function userFromRequest(req) {
     const m = /^Bearer (\S+)$/.exec(req.get('authorization') || '');
-    const user = m && q.userByToken.get(sha256(m[1]));
-    if (!user) return res.status(401).json({ error: 'Not signed in' });
-    req.user = user;
+    if (!m) return null;
+    const tokenHash = sha256(m[1]);
+    const user = q.userBySession.get(tokenHash) || q.userByToken.get(tokenHash);
+    return user ? { user, tokenHash } : null;
+  }
+
+  function auth(req, res, next) {
+    const found = userFromRequest(req);
+    if (!found) return res.status(401).json({ error: 'Not signed in' });
+    req.user = found.user;
+    req.tokenHash = found.tokenHash;
     next();
   }
 
-  const publicUser = (u) => ({ id: u.id, name: u.name, friendCode: u.friend_code, hasBackupCode: !!u.recovery_hash });
+  const publicUser = (u) => ({
+    id: u.id,
+    name: u.name,
+    friendCode: u.friend_code,
+    hasBackupCode: !!u.recovery_hash,
+    email: u.email || null,
+    age: u.age ?? null,
+    sex: u.sex || null,
+    heightCm: u.height_cm ?? null,
+    weightKg: u.weight_kg ?? null,
+    marketingOptIn: !!u.marketing_opt_in,
+  });
   const newToken = () => crypto.randomBytes(32).toString('base64url');
 
   app.get('/health', (req, res) => res.json({ ok: true }));
@@ -143,18 +169,23 @@ function createApp(db, { recoverLimit = 10 } = {}) {
     const code = normalizeBackupCode(req.body?.code);
     const user = code.length === 12 && q.userByRecovery.get(sha256(code));
     if (!user) return res.status(404).json({ error: "That backup code doesn't match any profile" });
+    // Sign out every other phone, then sign this one in
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
     const token = newToken();
     q.setToken.run(sha256(token), user.id);
-    res.json({ user: { id: user.id, name: user.name, friendCode: user.friend_code, hasBackupCode: true }, token });
+    res.json({ user: publicUser(q.userById.get(user.id)), token });
   });
 
   app.get('/api/me', auth, (req, res) => res.json({ user: publicUser(req.user) }));
 
-  app.patch('/api/me', auth, (req, res) => {
-    const name = cleanName(req.body?.name);
-    if (!name) return res.status(400).json({ error: 'Name must be 1–30 characters' });
-    q.renameUser.run(name, req.user.id);
-    res.json({ user: { ...publicUser(req.user), name } });
+  registerAccountRoutes(app, db, {
+    auth,
+    userFromRequest,
+    publicUser,
+    randomCode,
+    normalizeBackupCode,
+    rateLimiter,
+    limits: { signup: signupLimit, login: loginLimit, reset: recoverLimit },
   });
 
   app.delete('/api/me', auth, (req, res) => {

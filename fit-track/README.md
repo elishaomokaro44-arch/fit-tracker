@@ -13,6 +13,8 @@ A simple Expo (React Native) fitness app with five tabs (Today, Walk, BMI, Calor
   - **Weekly group challenge**: a shared step goal for you and your friends (25k–200k, Monday to Sunday) with a progress bar.
   - **Backup code**: create one so you can restore your profile, friend code and friends on a new phone.
 
+**Accounts:** the first time FitTrack opens, people sign up with name, email, password, age, sex, height and weight. There's an optional, unticked box to receive fitness tips and offers by email. After that, the Today tab greets them by name ("Welcome back, Elisha 👋"). Logging in on another phone brings back all their progress: steps, water, weight log, activities with routes, badges and settings. Progress is backed up every 5 minutes, whenever the app goes into the background, and on log-out. Tap the round initial button at the top right to change email preferences, log out or delete the account. Forgot your password? Use **Log in → Forgot password?** with the backup code from the Friends tab. The login is stored in the phone's secure storage (Keychain/Keystore).
+
 **Look and feel:** a sporty design with an orange-to-pink gradient, progress rings (daily steps, each day of the week, water, the group challenge) and rounded cards. Tap the 🌓 button in the top-right corner to choose **Auto** (follows your phone), **Light** or **Dark**.
 
 Steps, goal and body measurements are saved on the phone (AsyncStorage). The Friends tab needs the FitTrack server in [`../server`](../server/README.md); only your daily step totals and display name are sent to it.
@@ -63,6 +65,8 @@ Reminders are local notifications, scheduled on the phone (no server needed). A 
 - `App.js`: tab layout
 - `src/screens/`: Steps, BMI, Calories and Friends screens
 - `src/api.js`: talks to the FitTrack server; steps upload automatically a couple of seconds after they change
+- `src/sync.js`: how this phone's progress is combined with the server copy
+- `src/screens/AuthScreen.js`: sign up, log in, reset password; `src/components/AccountPanel.js`: account menu
 - `src/ui.js`: the theme (light and dark colours), progress ring and shared buttons, cards and inputs
 - `src/calc.js`: all the formulas (BMI, Mifflin-St Jeor, step distance)
 - `src/geo.js`: route maths (GPS distance, filtering, pace, walk calories)

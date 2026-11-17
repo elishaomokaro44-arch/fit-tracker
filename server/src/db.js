@@ -38,6 +38,39 @@ function openDb(file) {
   const cols = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
   if (!cols.includes('recovery_hash')) db.exec('ALTER TABLE users ADD COLUMN recovery_hash TEXT');
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_recovery ON users(recovery_hash)');
+
+  // Added later: full accounts (email + password), profile details and marketing consent
+  const accountCols = {
+    email: 'TEXT',
+    password_hash: 'TEXT',
+    age: 'INTEGER',
+    sex: 'TEXT',
+    height_cm: 'REAL',
+    weight_kg: 'REAL',
+    marketing_opt_in: 'INTEGER NOT NULL DEFAULT 0',
+    marketing_opt_in_at: 'TEXT',
+  };
+  const have = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+  for (const [col, type] of Object.entries(accountCols)) {
+    if (!have.includes(col)) db.exec(`ALTER TABLE users ADD COLUMN ${col} ${type}`);
+  }
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS users_email ON users(email);
+
+    -- One row per logged-in device, so logging in on a new phone doesn't sign out the old one
+    CREATE TABLE IF NOT EXISTS sessions (
+      token_hash TEXT PRIMARY KEY,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- The user's progress (steps, water, weights, activities...) as one JSON document
+    CREATE TABLE IF NOT EXISTS user_data (
+      user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      data       TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
   return db;
 }
 

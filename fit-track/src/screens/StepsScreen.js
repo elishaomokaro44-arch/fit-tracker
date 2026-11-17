@@ -247,7 +247,7 @@ export default function StepsScreen({ profile, onHistoryChange, active }) {
         end={{ x: 1, y: 1 }}
         style={hero.card}
       >
-        <Text style={hero.greeting}>{greeting} 👋</Text>
+        <Text style={hero.greeting}>{greeting}</Text>
         <Text style={hero.sub}>
           {done ? 'Goal smashed today. Keep it up!' : `${(goal - steps).toLocaleString()} steps to go`}
         </Text>

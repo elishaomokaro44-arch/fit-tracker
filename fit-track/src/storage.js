@@ -66,3 +66,8 @@ export const saveThemeMode = (v) => writeJSON('fit.theme', v);
 // Last activity type chosen on the Activity tab: 'walk' | 'run' | 'cycle'
 export const loadActivityType = () => readJSON('fit.activityType', 'walk');
 export const saveActivityType = (v) => writeJSON('fit.activityType', v);
+
+// Which account the progress on this phone belongs to (so another person logging in
+// on the same phone doesn't get it). Not synced.
+export const loadOwner = () => readJSON('fit.owner', null);
+export const saveOwner = (v) => writeJSON('fit.owner', v);

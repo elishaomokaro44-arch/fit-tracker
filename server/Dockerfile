@@ -5,6 +5,7 @@ ENV NODE_ENV=production
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 COPY src ./src
+COPY scripts ./scripts
 # The SQLite database lives here; mount a volume so it survives restarts
 RUN mkdir -p /app/data && chown node:node /app/data
 ENV DB_FILE=/app/data/fittrack.db PORT=4000

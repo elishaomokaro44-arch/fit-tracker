@@ -8,7 +8,8 @@
   },
   "scripts": {
     "test": "node --test test/*.test.js",
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "export-emails": "node scripts/export-marketing.js"
   },
   "keywords": [],
   "author": "",

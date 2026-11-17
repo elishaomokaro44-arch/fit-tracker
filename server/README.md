@@ -33,20 +33,40 @@ Run the tests with `npm test`.
 
 ## How accounts work
 
-- No passwords. Joining creates a profile and returns a long random token that the phone keeps. The server only stores a SHA-256 hash of it.
-- Users can create a **backup code** (12 characters, shown once; only its hash is stored). Entering it on a new phone restores the profile, friend code and friends, and signs the old phone out. Making a new code replaces the old one. Restore attempts are limited to 10 per 15 minutes per IP address.
-- Each profile gets a 6-character friend code. Adding a code makes the two people friends both ways straight away.
-- Friends see each other's daily step totals. People who aren't friends see nothing.
+- **Sign up** with name, email, password, age, sex, height and weight. Passwords are hashed with scrypt (never stored or sent back). Emails are stored lower-case and must be unique.
+- **Log in** on any number of phones; each gets its own session, so logging in on a new phone doesn't sign out the old one. Logging out ends only that phone's session.
+- **Profiles from before accounts** (leaderboard name + friend code only) are upgraded in place when that phone signs up, keeping the friend code and friends.
+- **Forgot password:** enter the email, the backup code and a new password. This signs out every phone.
+- **Progress sync:** the app keeps a copy of its data (steps, water, weight log, activities with routes, badges, settings) in `user_data`. Phones download it, combine it with their own data, and upload the result.
+- **Marketing emails are opt-in.** The consent time is stored in `marketing_opt_in_at` and cleared when someone opts out in the app.
+- Sign-up, log-in and password-reset attempts are rate limited per IP address.
+- Deleting an account removes the user, their sessions, friendships, steps and synced data.
+
+## Exporting the email list
+
+Only users who opted in are included:
+
+```bash
+docker compose exec api node scripts/export-marketing.js > subscribers.csv
+```
+
+(or `npm run export-emails > subscribers.csv` when running without Docker). The CSV has name, email, age, sex and the opt-in time, ready to import into an email tool such as Mailchimp, Brevo or AWS SES. Every email you send must include an unsubscribe link, and people who unsubscribe there should also be opted out in FitTrack.
 
 ## Endpoints
 
-All except sign-up need `Authorization: Bearer <token>`.
+All except sign-up, log-in, password reset and restore need `Authorization: Bearer <token>`.
 
 | Method | Path                | Body / query                                   |
 |--------|---------------------|------------------------------------------------|
-| POST   | `/api/users`        | `{ "name": "Osaru" }` → `{ user, token }`      |
+| POST   | `/api/auth/signup`  | `{ name, email, password, age, sex, heightCm, weightKg, marketingOptIn }` → `{ user, token }` |
+| POST   | `/api/auth/login`   | `{ email, password }` → `{ user, token }` |
+| POST   | `/api/auth/logout`  | Ends this phone's session |
+| POST   | `/api/auth/reset`   | `{ email, backupCode, newPassword }` → `{ user, token }` |
+| GET    | `/api/sync`         | → `{ data, updatedAt }` |
+| PUT    | `/api/sync`         | `{ data: { ... } }` (up to 3 MB) |
+| POST   | `/api/users`        | Older name-only sign-up, kept for compatibility |
 | GET    | `/api/me`           |                                                |
-| PATCH  | `/api/me`           | `{ "name": "New name" }`                       |
+| PATCH  | `/api/me`           | Any of `name, age, sex, heightCm, weightKg, marketingOptIn` |
 | DELETE | `/api/me`           | Deletes the profile, its steps and friendships |
 | PUT    | `/api/steps`        | `{ "days": { "2026-11-17": 4500 } }` (≤31 days) |
 | POST   | `/api/friends`      | `{ "code": "K7P2QX" }`                         |

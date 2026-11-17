@@ -124,7 +124,6 @@ function Signed({ account, onSignedOut, updateUser, syncNow }) {
   const [code, setCode] = useState('');
   const [addMsg, setAddMsg] = useState(null); // { ok, text }
   const [confirmRemove, setConfirmRemove] = useState(null);
-  const [confirmLeave, setConfirmLeave] = useState(false);
   const [week, setWeek] = useState(null); // this week's (Mon–today) group total, for the challenge
   const [challengeGoal, setChallengeGoal] = useState(50000);
 
@@ -196,16 +195,6 @@ function Signed({ account, onSignedOut, updateUser, syncNow }) {
     } catch (e) {
       handleError(e);
     }
-  }
-
-  async function leave() {
-    if (!confirmLeave) return setConfirmLeave(true);
-    try {
-      await api.deleteMe(token);
-    } catch (e) {
-      if (e.status !== 401) return setError(e.message);
-    }
-    onSignedOut('');
   }
 
   const top = board?.entries[0]?.steps || 0;
@@ -330,11 +319,6 @@ function Signed({ account, onSignedOut, updateUser, syncNow }) {
         ) : null}
       </Card>
 
-      <Pressable onPress={leave} style={{ alignItems: 'center', padding: 8 }} accessibilityRole="button">
-        <Text style={{ color: c.danger, fontSize: 13 }}>
-          {confirmLeave ? 'Tap again to delete your profile from the server' : 'Leave the leaderboard'}
-        </Text>
-      </Pressable>
       <Text style={[s.muted, { textAlign: 'center', fontSize: 11 }]}>Server: {API_URL}</Text>
     </View>
   );
